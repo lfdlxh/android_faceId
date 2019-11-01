@@ -30,6 +30,7 @@ import android.widget.Toast;
 
 import com.alibaba.fastjson.JSON;
 import com.example.myproj.baidu.LogoResult;
+import com.example.myproj.baidu.image;
 import com.google.gson.Gson;
 
 import java.io.ByteArrayOutputStream;
@@ -38,10 +39,12 @@ import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.URL;
 import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
 import java.util.HashMap;
 import java.util.Map;
+import java.util.zip.GZIPOutputStream;
 
 import okhttp3.MediaType;
 import okhttp3.MultipartBody;
@@ -57,10 +60,9 @@ public class MainActivity extends AppCompatActivity {
     private byte[] fileBuf;
     private String uploadUrl = "http://121.199.23.49:8010/upload";
     private Uri imageUri;
-    private ImageView imageView;
-    private File imagePath;
-    private File photoFile;
     private String accessToken="24.ec1b80b363d80daea15a6a25b3dbb5b4.2592000.1575020069.282335-16234596";
+    private int REQUEST_CODE_CAMERA=2;
+    private Bitmap map;
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -110,27 +112,27 @@ public class MainActivity extends AppCompatActivity {
             case 2:
                 if (resultCode == RESULT_OK) {
                     try {
+
                         //利用ContentResolver,查询临时文件，并使用BitMapFactory,从输入流中创建BitMap
                         //同样需要配合Provider,在Manifest.xml中加以配置
-                        InputStream inputStream_map = getContentResolver().openInputStream(imageUri);
-                        InputStream inputStream_byte=getContentResolver().openInputStream(imageUri);
-                       Bitmap map = BitmapFactory.decodeStream(inputStream_map);
-                       photo.setImageBitmap(map);
-                       fileBuf = convertToBytes(inputStream_byte);
-                       uploadFileName = System.currentTimeMillis() + ".jpg";
 
-                        Log.i("filebuf.length", String.valueOf(fileBuf.length));
+                                    InputStream inputStream_map = getContentResolver().openInputStream(imageUri);
+                                    InputStream inputStream_byte=getContentResolver().openInputStream(imageUri);
+                                    fileBuf = convertToBytes(inputStream_byte);
 
+                                    map = BitmapFactory.decodeStream(inputStream_map);
+                                    photo.setImageBitmap(map);
 
-                    } catch (FileNotFoundException e) {
-                        e.printStackTrace();
-                    } catch (Exception e) {
-                        e.printStackTrace();
+                                    uploadFileName = System.currentTimeMillis() + ".jpg";
+                                } catch (Exception e) {
+                                    e.printStackTrace();
+                                }
                     }
                 }
-                break;
+
         }
-    }
+
+
 
     //选择后照片的读取工作
     private void handleSelect(Intent intent) {
@@ -142,16 +144,18 @@ public class MainActivity extends AppCompatActivity {
             uploadFileName = cursor.getString(columnIndex);
         }
         try {
+            InputStream inputStream_byte = getContentResolver().openInputStream(uri);
+            InputStream inputStream_map = getContentResolver().openInputStream(uri);
 
-            InputStream inputStream = getContentResolver().openInputStream(uri);
-            fileBuf = convertToBytes(inputStream);
-            int length = fileBuf.length;
-            Bitmap bitmap = BitmapFactory.decodeByteArray(fileBuf, 0, length);
+            fileBuf = convertToBytes(inputStream_byte);
+
+            Bitmap bitmap = BitmapFactory.decodeStream(inputStream_map);
             photo.setImageBitmap(bitmap);
 
             //编码
             String img = Base64.encodeToString(fileBuf, Base64.DEFAULT);
-            inputStream.close();
+            inputStream_byte.close();
+            inputStream_map.close();
             //getBDapi(img);
 
 
@@ -162,7 +166,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     //文件上传的处理
-    public void upload(View view) {
+    public void upload() {
         new Thread() {
             @Override
             public void run() {
@@ -257,19 +261,26 @@ public class MainActivity extends AppCompatActivity {
         if (outImg.exists()) outImg.delete();
         outImg.createNewFile();
 
+        System.out.println("0");
         //复杂的Uri创建方式
         if (Build.VERSION.SDK_INT >= 24)
             //这是Android 7后，更加安全的获取文件uri的方式（需要配合Provider,在Manifest.xml中加以配置）
+        {
             imageUri = FileProvider.getUriForFile(this, "xjtu.lxh.camera.fileprovider", outImg);
+
+        }
 
         else
             imageUri = Uri.fromFile(outImg);
 
 
+
         //利用actionName和Extra,启动《相机Activity》
         Intent intent = new Intent("android.media.action.IMAGE_CAPTURE");
+
         intent.putExtra(MediaStore.EXTRA_OUTPUT, imageUri);
-        startActivityForResult(intent, 2);
+
+        startActivityForResult(intent,REQUEST_CODE_CAMERA);
 
         //到此，启动了相机，等待用户拍照
     }
@@ -279,24 +290,29 @@ public class MainActivity extends AppCompatActivity {
 
                 public void run() {
                     String url="https://aip.baidubce.com/rest/2.0/face/v3/faceset/user/add?access_token="+accessToken;
-                    String img64 =Base64.encodeToString(fileBuf, Base64.DEFAULT);
-                    Map<String,String> map =new HashMap();
-                    map.put("group_id","lxh1");
-                    map.put("user_id","962422");
-                    map.put("image",img64);
-                    map.put("image_type","BASE64");
-                    String faceJson = new Gson().toJson(map);
+                    try {
+                    //先上传到服务器
+                       upload();
+                       //对图片压缩
+                        String img64 = compressBitmap(map,2048000,false);
+                        //创建json对象
+                        Map<String,String> map = new HashMap<>();
+                        map.put("group_id","lxh1");
+                        map.put("user_id","962422");
+                        map.put("image",img64);
+                        map.put("image_type","BASE64");
+                        String faceJson = new Gson().toJson(map);
                     //post请求
                     MediaType json = MediaType.get("application/json; charset=utf-8");
                     OkHttpClient client = new OkHttpClient();
                     RequestBody body = RequestBody.create(json, faceJson);
-                    Request request = new Request.Builder()
+                    Request request1 = new Request.Builder()
                             .url(url)
                             .post(body)
                             .build();
                     Response response = null;
-                    try {
-                        response = client.newCall(request).execute();
+
+                        response = client.newCall(request1).execute();
                         String result = response.body().string();
                         System.out.println(result);
 
@@ -306,6 +322,57 @@ public class MainActivity extends AppCompatActivity {
                     }
                 }
             }.start();
+    }
+    public String compressBitmap(Bitmap bitmap, double maxSize, boolean needRecycle) {
+        if (bitmap == null) {
+            return null;
+        } else {
+            int width = bitmap.getWidth();
+            int height = bitmap.getHeight();
+            //计算等比缩放
+            double x = Math.sqrt(maxSize / (width * height));
+            Bitmap tmp = Bitmap.createScaledBitmap(bitmap, (int) Math.floor(width * x), (int) Math.floor(height * x), true);
+            ByteArrayOutputStream baos = new ByteArrayOutputStream();
+            int options = 100;
+            //生产byte[]
+            tmp.compress(Bitmap.CompressFormat.JPEG, options, baos);
+            //判断byte[]与上线存储空间的大小
+            if (baos.toByteArray().length > maxSize) {
+                //根据内存大小的比例，进行质量的压缩
+                options = (int) Math.ceil((maxSize / baos.toByteArray().length) * 100);
+                baos.reset();
+                tmp.compress(Bitmap.CompressFormat.JPEG, options, baos);
+                //循环压缩
+                while (baos.toByteArray().length > maxSize) {
+                    baos.reset();
+                    options -= 1.5;
+                    tmp.compress(Bitmap.CompressFormat.JPEG, options, baos);
+                }
+                recycle(tmp);
+                if (needRecycle) {
+                    recycle(bitmap);
+                }
+            }
+            byte[] data = baos.toByteArray();
+            String image64 = Base64.encodeToString(data,Base64.DEFAULT);
+            System.out.println(image64.length());
+            try {
+                baos.close();
+            } catch (Exception e) {
+                e.printStackTrace();
+            }
+            return image64;
+        }
+    }
+
+    /**
+     * 回收Bitmap
+     * @param thumbBmp  需要被回收的bitmap
+     */
+    public static void recycle(Bitmap thumbBmp) {
+        if (thumbBmp != null && !thumbBmp.isRecycled()) {
+            thumbBmp.recycle();
+        }
     }
 }
 

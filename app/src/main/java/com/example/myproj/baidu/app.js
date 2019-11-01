@@ -35,7 +35,7 @@ app.post('/upload', upload.single('picture'), function (req, res, next) {
     let output=fs.createWriteStream(FILE_PATH+req.file.originalname);
     let input=fs.createReadStream(req.file.path);
     input.pipe(output);
-    res.json(msg);
+    res.json(FILE_PATH+req.file.originalname);
 })
 //接收前端的请求，返回上传图片的列表
 app.get("/files",function (req,res) {
